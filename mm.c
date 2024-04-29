@@ -42,11 +42,11 @@ team_t team = {
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
 
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+#define SIZE_T_SIZE (ALIGN(sizeof(size_t))) // allign 4byte
 
 /////////////////////////////////////////////
 /*              define macro               */
-#define FIT 2 // fit
+#define FIT 3 // fit
 
 #define WSIZE 4 // word
 #define DSIZE 8 // double word
@@ -69,7 +69,7 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE((char *)(bp) - DSIZE)) // 이전 블록의 주소 계산
 /////////////////////////////////////////////
 
-static char *heap_listp;
+static char *heap_listp; // points prologue
 char *lastp; // save previous search point for next fit
 
 static void *coalesce(void *bp) {
@@ -139,13 +139,14 @@ int mm_init(void)
     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
 
-    PUT(heap_listp, 0); // pading
+    PUT(heap_listp, 0); // padding
     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); // prologue header (4byte)
     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); // prologue footer (4byte)
     PUT(heap_listp + (3 * WSIZE), PACK(0, 1)); // epilogue header (0byte)
     heap_listp += (2 * WSIZE); // heap_listp points prologue footer
     lastp = heap_listp;
 
+    // extend until chunksize
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
 
@@ -158,6 +159,7 @@ int mm_init(void)
  */
 
 #if FIT == 1
+// first fit
 static void *find_fit(size_t asize) {
     void *bp;
     // printf("exec first fit...\n");
@@ -172,6 +174,7 @@ static void *find_fit(size_t asize) {
 }
 
 #elif FIT == 2
+// next fit
 static void *find_fit(size_t asize) {
     void *bp;
     void *old_lastp = lastp;
@@ -192,6 +195,24 @@ static void *find_fit(size_t asize) {
     }
     
     return NULL;
+}
+
+#elif FIT == 3
+// best fit
+static void *find_fit(size_t asize) {
+    void *bp;
+    void *best = NULL;
+
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && asize <= GET_SIZE(HDRP(bp))) { // if free and allocatable
+            if (best == NULL)
+                best = bp;
+            if (GET_SIZE(HDRP(bp)) <= GET_SIZE(HDRP(best)))
+                best = bp;
+        }
+    }
+
+    return best;
 }
 #endif
 
@@ -224,10 +245,6 @@ void *mm_malloc(size_t size)
     
     // 8 byte allignment
     asize = ALIGN(size + SIZE_T_SIZE);
-    // if (size <= DSIZE)
-    //     asize = 2 * DSIZE;
-    // else
-    //     asize = DSIZE * ((size + DSIZE + (DSIZE - 1)) / DSIZE);
 
     // search free space
     if ((bp = find_fit(asize)) != NULL) {
@@ -241,9 +258,10 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL) 
         return NULL;
     place(bp, asize);
-    lastp = bp;
+    lastp = bp; // save last search point
     return bp;
 
+    // basic malloc
     // int newsize = ALIGN(size + SIZE_T_SIZE);
     // void *p = mem_sbrk(newsize);
     // if (p == (void *)-1)
@@ -270,7 +288,7 @@ void mm_free(void *ptr)
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
 
- // mm_malloc이 find fit, extend heap을 하고 있음
+// mm_malloc이 find fit, extend heap을 하고 있음
 void *mm_realloc(void *ptr, size_t size)
 {
     void *oldptr = ptr;
@@ -291,14 +309,14 @@ void *mm_realloc(void *ptr, size_t size)
     }
 
     // 3. adjusted size is smaller
-    size_t bsize = copySize + GET_SIZE(HDRP(NEXT_BLKP(oldptr)));
-    size_t asize = ALIGN(size + SIZE_T_SIZE);
     if (size + DSIZE <= copySize) { // 왜 size + DSIZE??
         // printf("Case 3\n");
         return ptr;
     }
 
     // 4. bigger size
+    size_t bsize = copySize + GET_SIZE(HDRP(NEXT_BLKP(oldptr)));
+    size_t asize = ALIGN(size + SIZE_T_SIZE);
 
     // next is available and size is enough
     if (!GET_ALLOC(HDRP(NEXT_BLKP(oldptr))) && (size + DSIZE <= bsize)) {
@@ -306,11 +324,10 @@ void *mm_realloc(void *ptr, size_t size)
         PUT(HDRP(ptr), PACK(bsize, 1)); // 1 is alloc, 0 is free
         PUT(FTRP(ptr), PACK(bsize, 1));
         place(ptr, asize); // divide
-        lastp = ptr;
+        lastp = ptr; // save last search point
         return ptr;
     }
 
-    // printf("HEllo\n");
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
@@ -322,17 +339,3 @@ void *mm_realloc(void *ptr, size_t size)
     return newptr;
 
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
