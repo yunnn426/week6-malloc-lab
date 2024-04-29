@@ -94,7 +94,6 @@ static void *coalesce(void *bp) {
 
     // case 4: both free
     else {
-        /////
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
@@ -194,11 +193,11 @@ void *mm_malloc(size_t size)
         return NULL;
     
     // 8 byte allignment
-    // asize = ALIGN(size + SIZE_T_SIZE);
-    if (size <= DSIZE)
-        asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + DSIZE + (DSIZE - 1)) / DSIZE);
+    asize = ALIGN(size + SIZE_T_SIZE);
+    // if (size <= DSIZE)
+    //     asize = 2 * DSIZE;
+    // else
+    //     asize = DSIZE * ((size + DSIZE + (DSIZE - 1)) / DSIZE);
 
     // search free space
     if ((bp = find_fit(asize)) != NULL) {
@@ -242,30 +241,47 @@ void mm_free(void *ptr)
  // mm_malloc이 find fit, extend heap을 하고 있음
 void *mm_realloc(void *ptr, size_t size)
 {
-    // if (size == 0) { // change ptr block size to 0 == free block
-    //     mm_free(size);
-    //     return NULL;
-    // }
     void *oldptr = ptr;
     void *newptr;
-    size_t copySize;
-    
-    // check if next block is free
-    // if (!GET_ALLOC(HDRP(NEXT_BLKP(oldptr)))) {
-    //     // if (now block size + next block size) <= new size 
-    //     // coalesce 
-    //     if ((GET_SIZE(HDRP(oldptr)) + GET_SIZE(HDRP(NEXT_BLKP(oldptr)))) >= size) {
-    //         size += GET_SIZE(HDRP(NEXT_BLKP(oldptr))); // coalesce next block
-    //         PUT(HDRP(oldptr), PACK(size, 0)); // update header
-    //         PUT(FTRP(oldptr), PACK(size, 0)); // update footer
-    //     }
-    //     return oldptr;
-    // }
+    size_t copySize = GET_SIZE(HDRP(oldptr));
 
+    // 1. realloc from NULL == malloc
+    if (ptr == NULL) {
+        // printf("Case 1\n");
+        return mm_malloc(size);
+    }
+
+    // 2. change ptr block size to 0 == free block
+    if (size == 0) { 
+        // printf("Case 2\n");
+        mm_free(ptr);
+        return NULL;
+    }
+
+    // 3. adjusted size is smaller
+    size_t bsize = copySize + GET_SIZE(HDRP(NEXT_BLKP(oldptr)));
+    size_t asize = ALIGN(size + SIZE_T_SIZE);
+    if (size + DSIZE <= copySize) { // 왜 size + DSIZE??
+        // printf("Case 3\n");
+        return ptr;
+    }
+
+    // 4. bigger size
+
+    // next is available and size is enough
+    if (!GET_ALLOC(HDRP(NEXT_BLKP(oldptr))) && (size + DSIZE <= bsize)) {
+        // printf("Case 4\n");
+        PUT(HDRP(ptr), PACK(bsize, 1)); // 1 is alloc, 0 is free
+        PUT(FTRP(ptr), PACK(bsize, 1));
+        place(ptr, asize); // divide
+        return ptr;
+    }
+
+    // printf("HEllo\n");
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
-    copySize = GET_SIZE(HDRP(oldptr));
+
     if (size < copySize)
       copySize = size;
     memmove(newptr, oldptr, copySize);
