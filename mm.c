@@ -46,6 +46,8 @@ team_t team = {
 
 /////////////////////////////////////////////
 /*              define macro               */
+#define FIT 2 // fit
+
 #define WSIZE 4 // word
 #define DSIZE 8 // double word
 #define CHUNKSIZE (1<<12)
@@ -67,6 +69,9 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE((char *)(bp) - DSIZE)) // 이전 블록의 주소 계산
 /////////////////////////////////////////////
 
+static char *heap_listp;
+char *lastp; // save previous search point for next fit
+
 static void *coalesce(void *bp) {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // allocation of prev block
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp))); // allocation of next block
@@ -74,6 +79,7 @@ static void *coalesce(void *bp) {
 
     // case 1: both allocated
     if (prev_alloc && next_alloc) {
+        lastp = bp;
         return bp;
     }
     
@@ -100,6 +106,7 @@ static void *coalesce(void *bp) {
         bp = PREV_BLKP(bp);
     }
 
+    lastp = bp;
     return bp;    
 }
 
@@ -114,7 +121,6 @@ static void *extend_heap(size_t words) {
         return NULL;
     }
         
-
     PUT(HDRP(bp), PACK(size, 0)); // header for newly extended heap block
     PUT(FTRP(bp), PACK(size, 0)); // footer for newly extended heap block
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // new epilogue block
@@ -126,7 +132,6 @@ static void *extend_heap(size_t words) {
 /* 
  * mm_init - initialize the malloc package.
  */
-static char *heap_listp;
 
 int mm_init(void)
 {   
@@ -139,7 +144,7 @@ int mm_init(void)
     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); // prologue footer (4byte)
     PUT(heap_listp + (3 * WSIZE), PACK(0, 1)); // epilogue header (0byte)
     heap_listp += (2 * WSIZE); // heap_listp points prologue footer
-
+    lastp = heap_listp;
 
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
@@ -152,10 +157,11 @@ int mm_init(void)
  *     Always allocate a block whose size is a multiple of the alignment.
  */
 
+#if FIT == 1
 static void *find_fit(size_t asize) {
     void *bp;
+    // printf("exec first fit...\n");
     // iterate heap space
-
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         //printf("now block %d\n", GET(bp));
         if (!GET_ALLOC(HDRP(bp)) && asize <= GET_SIZE(HDRP(bp))) // if free and allocatable
@@ -164,6 +170,30 @@ static void *find_fit(size_t asize) {
 
     return NULL;
 }
+
+#elif FIT == 2
+static void *find_fit(size_t asize) {
+    void *bp;
+    void *old_lastp = lastp;
+    
+    for (bp = lastp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && asize <= GET_SIZE(HDRP(bp))) { // if free and allocatable
+            lastp = NEXT_BLKP(bp);
+            return bp;
+        }
+    }
+
+    // cant find 
+    for (bp = heap_listp; bp < old_lastp; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && asize <= GET_SIZE(HDRP(bp))) { // if free and allocatable
+            lastp = NEXT_BLKP(bp);
+            return bp;
+        }
+    }
+    
+    return NULL;
+}
+#endif
 
 // divide block (minimum block is 8byte)
 static void place(void *bp, size_t asize) {
@@ -202,6 +232,7 @@ void *mm_malloc(size_t size)
     // search free space
     if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize);
+        lastp = bp;
         return bp;
     }
 
@@ -210,6 +241,7 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL) 
         return NULL;
     place(bp, asize);
+    lastp = bp;
     return bp;
 
     // int newsize = ALIGN(size + SIZE_T_SIZE);
@@ -274,6 +306,7 @@ void *mm_realloc(void *ptr, size_t size)
         PUT(HDRP(ptr), PACK(bsize, 1)); // 1 is alloc, 0 is free
         PUT(FTRP(ptr), PACK(bsize, 1));
         place(ptr, asize); // divide
+        lastp = ptr;
         return ptr;
     }
 
